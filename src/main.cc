@@ -47,7 +47,7 @@ extern "C" void main_task(void* args) {
   adc_select_input(0);
 
   while (true) {
-    const uint8_t level = adc_read() >> 4;
+    const uint8_t level = adc_read();
     printf("%d - %s\n", level, LevelToDirection(level).data());
     sleep_ms(100);
   }
