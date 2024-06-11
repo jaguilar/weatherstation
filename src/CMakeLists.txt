@@ -1,0 +1,2 @@
+add_pico_executable(weather main.cc)
+target_link_libraries(weather PRIVATE common freertosxx pico_printf hardware_adc hardware_gpio)
