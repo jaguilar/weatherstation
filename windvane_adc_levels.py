@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+
 import argparse
 from numbers import Number
 
@@ -25,7 +27,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 
-def AdcLevels8Bits(resistors: dict[str, Number], divider_impedance: Number):
+def AdcLevels(resistors: dict[str, Number], divider_impedance: Number):
     if divider_impedance < 1:
         raise Exception
     ret = {}
@@ -73,7 +75,7 @@ if __name__ == "__main__":
 
         result = scipy.optimize.minimize_scalar(
             lambda divider_impedance: -MinLevelDiff(
-                AdcLevels8Bits(resistors, divider_impedance)
+                AdcLevels(resistors, divider_impedance)
             ),
             bounds=(100, 200000),
         )
@@ -82,7 +84,7 @@ if __name__ == "__main__":
             exit()
         print(result.x)
     elif args.impedance is not None:
-        floatlevels = AdcLevels8Bits(resistors, float(args.impedance))
+        floatlevels = AdcLevels(resistors, float(args.impedance))
         intlevels = {k: round(v) for (k, v) in floatlevels.items()}
         print(intlevels)
         print(f"Minimum diff between levels: {MinLevelDiff(floatlevels)}")
