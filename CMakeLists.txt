@@ -18,8 +18,14 @@ FetchContent_Declare(
   GIT_TAG        main
   EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(
+  etl
+  GIT_REPOSITORY https://github.com/ETLCPP/etl.git
+  GIT_TAG        20.38.17
+  EXCLUDE_FROM_ALL
+)
 
-project(awning VERSION 0.1.0 LANGUAGES C CXX ASM)    
+project(weatherstation VERSION 0.1.0 LANGUAGES C CXX ASM)    
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -29,6 +35,6 @@ pico_sdk_init()
 
 add_compile_options(-ffunction-sections -fdata-sections -Wl,--gc-sections)
 
-FetchContent_MakeAvailable(jagspico)
+FetchContent_MakeAvailable(jagspico etl)
 
 add_subdirectory(src)
