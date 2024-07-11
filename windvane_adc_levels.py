@@ -32,7 +32,7 @@ def AdcLevels(resistors: dict[str, Number], divider_impedance: Number):
         raise Exception
     ret = {}
     for direction, impedance in resistors.items():
-        fraction = divider_impedance / (divider_impedance + impedance)
+        fraction = impedance / (divider_impedance + impedance)
         oneword = fraction * 2**args.level_bits
         ret[direction] = oneword
     return ret
