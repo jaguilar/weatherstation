@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <format>
+#include <functional>
 #include <limits>
 #include <string_view>
 #include <tuple>
@@ -17,7 +19,9 @@
 #include "hardware/irq.h"
 #include "hardware/regs/intctrl.h"
 #include "hardware/timer.h"
+#include "hardware/watchdog.h"
 #include "homeassistant/homeassistant.h"
+#include "lwip/err.h"
 #include "lwipxx/mqtt.h"
 #include "pico/platform.h"
 #include "pico/time.h"
@@ -27,23 +31,26 @@
 
 using lwipxx::MqttClient;
 
-/*Old: when I had the windvane first, then the
-ADC, then the divider. {std::make_pair("NE",
-1195), std::make_pair("E", 3160),
-   std::make_pair("SE", 2480),
-   std::make_pair("S", 1901),
-   std::make_pair("SW", 714),
-   std::make_pair("W", 112),
-   std::make_pair("NW", 203),
-   std::make_pair("N", 380),
-   std::make_pair("NNE", 1391),
-   std::make_pair("ENE", 3241),
-   std::make_pair("ESE", 3403),
-   std::make_pair("SSE", 2892),
-   std::make_pair("SSW", 2124),
-   std::make_pair("WSW", 791),
-   std::make_pair("WNW", 304),
-   std::make_pair("NNW", 548)}*/
+// We average wind speed and report it every 30s. Rain is reported every 10
+// mins (although the scaled rate per hour is the value we report).
+constexpr int kRainReportPeriodSecs = 10 * 60;
+constexpr int kWindReportPeriodSecs = 5;
+constexpr uint64_t kRainGaugeFlushUs = kRainReportPeriodSecs * 1e6;
+constexpr uint64_t kAnemometerFlushUs = kWindReportPeriodSecs * 1e6;
+
+using SensorPubFn = std::function<void(std::string_view, std::string_view)>;
+
+void SensorPublish(
+    MqttClient& client, std::string_view topic, std::string_view payload) {
+  err_t err = client.Publish(topic, payload, MqttClient::kBestEffort, true);
+  if (err != ERR_OK) {
+    printf("%s\n", std::format("error publishing {}", err).c_str());
+  } else {
+    // On successful Publish, update the watchdog.
+    watchdog_update();
+  }
+}
+
 std::string_view LevelToDirection(int32_t adc_reading) {
   // ADC target levels assume a divider impedance of 3377 ohms, which can be
   // achieved by putting a 5100 ohm and 10000 ohm resistor in parallel.
@@ -102,8 +109,8 @@ void wind_direction_task(void* args) {
   while (true) {
     const uint16_t level = adc_read();
     std::string_view direction = LevelToDirection(level);
-    (void)mqtt.Publish(state_topic, direction, MqttClient::kBestEffort, true);
-    sleep_ms(5000);
+    SensorPublish(mqtt, state_topic, direction);
+    sleep_ms(kWindReportPeriodSecs * 1000);
   }
 }
 
@@ -183,7 +190,7 @@ void track_wind_and_rain(
     MqttClient& mqtt, std::string_view wind_topic,
     std::string_view rain_topic) {
   // Keep this task on the current core so that when we pause interrupts
-  // we also .
+  // we are pausing them on the same core as the one we live on.
   vTaskCoreAffinitySet(nullptr, 1 << get_core_num());
 
   gpio_init(kAnemometerPin);
@@ -211,13 +218,6 @@ void track_wind_and_rain(
   gpio_set_irq_enabled(kRainGaugePin, GPIO_IRQ_EDGE_FALL, true);
   gpio_set_irq_callback(callback);
   irq_set_enabled(IO_IRQ_BANK0, true);
-
-  // We average wind speed and report it every 30s. Rain is reported every 10
-  // mins (although the scaled rate per hour is the value we report).
-  constexpr int kRainGaugeFlushSecs = 10 * 60;
-  constexpr int kAnemometerFlushSecs = 5;
-  constexpr uint64_t kRainGaugeFlushUs = kRainGaugeFlushSecs * 1e6;
-  constexpr uint64_t kAnemometerFlushUs = kAnemometerFlushSecs * 1e6;
 
   absolute_time_t next_rain_gauge_flush =
       delayed_by_us(get_absolute_time(), kRainGaugeFlushUs);
@@ -268,12 +268,7 @@ void track_wind_and_rain(
           "collected %d ticks, %.1f in/h\n",
           *rain_gauge_flush,
           rain_inches_per_hour);
-      (void)mqtt.Publish(
-          rain_topic,
-          std::to_string(rain_inches_per_hour),
-          MqttClient::kBestEffort,
-          true,
-          nullptr);
+      SensorPublish(mqtt, rain_topic, std::to_string(rain_inches_per_hour));
     }
 
     if (anemometer_flush) {
@@ -285,12 +280,7 @@ void track_wind_and_rain(
           *anemometer_flush * kAnemometerSpeedPerTick;
       const double wind_mph = counted_wind_mph / elapsed_time_sec;
       printf("collected %d ticks, %.1f mph\n", *anemometer_flush, wind_mph);
-      (void)mqtt.Publish(
-          wind_topic,
-          std::to_string(wind_mph),
-          MqttClient::kBestEffort,
-          true,
-          nullptr);
+      SensorPublish(mqtt, wind_topic, std::to_string(wind_mph));
     }
   }
 }
@@ -330,4 +320,11 @@ extern "C" void main_task(void* args) {
       1,
       nullptr);
   wind_direction_task(static_cast<void*>(mqtt.get()));
+
+  // We will update the watchdog each time we successfully publish a message.
+  // If we fail to publish for
+  constexpr int kMaxMissedPublishPeriods = 3;
+  constexpr int kWatchdogMs =
+      (1 + 3 * std::min({kWindReportPeriodSecs, kRainReportPeriodSecs})) * 1000;
+  watchdog_enable(kWatchdogMs, true);
 }
