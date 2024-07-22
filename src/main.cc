@@ -7,13 +7,9 @@
 #include <functional>
 #include <limits>
 #include <string_view>
-#include <tuple>
 #include <utility>
 
-#include "FreeRTOS.h"
-#include "etl/circular_buffer.h"
 #include "freertosxx/mutex.h"
-#include "freertosxx/queue.h"
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
