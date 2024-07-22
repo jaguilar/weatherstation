@@ -33,7 +33,7 @@ set(PICO_BOARD "pico_w")
 
 pico_sdk_init()
 
-add_compile_options(-ffunction-sections -fdata-sections -Wl,--gc-sections)
+add_compile_options(-ffunction-sections -fdata-sections -Wl,--gc-sections -Wno-psabi)
 
 FetchContent_MakeAvailable(jagspico etl)
 
