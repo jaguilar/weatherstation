@@ -42,7 +42,7 @@ using SensorPubFn = std::function<void(std::string_view, std::string_view)>;
 
 void SensorPublish(
     MqttClient& client, std::string_view topic, std::string_view payload) {
-  err_t err = client.Publish(topic, payload, MqttClient::kBestEffort, true);
+  err_t err = client.Publish(topic, payload, MqttClient::kAtLeastOnce, true);
   if (err != ERR_OK) {
     printf("%s\n", std::format("error publishing {}", err).c_str());
   } else {
