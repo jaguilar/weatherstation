@@ -1,3 +1,5 @@
+#include <FreeRTOSConfig.h>
+
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -9,11 +11,13 @@
 #include <string_view>
 #include <utility>
 
+#include "freertosxx/event.h"
 #include "freertosxx/mutex.h"
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/regs/intctrl.h"
+#include "hardware/structs/watchdog.h"
 #include "hardware/timer.h"
 #include "hardware/watchdog.h"
 #include "homeassistant/homeassistant.h"
@@ -36,17 +40,52 @@ constexpr uint64_t kAnemometerFlushUs = kWindReportPeriodSecs * 1e6;
 
 using SensorPubFn = std::function<void(std::string_view, std::string_view)>;
 
+struct LastSuccessfulPublishInfo {
+  absolute_time_t when;
+  int attempts_since = 0;
+};
+
+freertosxx::OwnerBorrowable<LastSuccessfulPublishInfo>
+    g_last_successful_sensor_publish = {std::in_place, get_absolute_time(), 0};
+
+void CheckLastSuccessfulPublish() {
+  auto p = g_last_successful_sensor_publish.Borrow();
+  constexpr uint32_t kMinUsSinceSuccessToReboot = 20'000'000;
+  constexpr int kMinAttemptsToReboot = 5;
+  // We ensure both that time has passed and that many attempts have been made
+  // before rebooting to prevent a scenario where we fail just because no
+  // attempts are made due to a debugger being attached, for example.
+  if (absolute_time_diff_us(get_absolute_time(), p->when) >
+          kMinUsSinceSuccessToReboot &&
+      p->attempts_since > kMinAttemptsToReboot) {
+    printf(
+        "Last successful publish more than %0.1f seconds ago and we've tried "
+        "%d times since, rebooting\n",
+        kMinUsSinceSuccessToReboot / 1'000'000.,
+        p->attempts_since);
+    watchdog_reboot(0, 0, 0);
+    return;
+  } else {
+    ++p->attempts_since;
+  }
+}
+
+void UpdateLastSuccessfulPublish() {
+  const absolute_time_t now = get_absolute_time();
+  *g_last_successful_sensor_publish.Borrow() = {now, 0};
+}
+
 void SensorPublish(
     MqttClient& client, std::string_view topic, std::string_view payload) {
+  CheckLastSuccessfulPublish();
   err_t err = client.Publish(
       topic, payload, MqttClient::kAtLeastOnce, true, [](err_t err) {
-        if (err != ERR_OK) {
+        if (err == ERR_OK) {
+          UpdateLastSuccessfulPublish();
+        } else {
           printf(
               "%s\n",
               std::format("error publishing {}", lwip_strerr(err)).c_str());
-        } else {
-          // On successful Publish, update the watchdog.
-          watchdog_update();
         }
       });
   if (err != ERR_OK) {
@@ -326,11 +365,4 @@ extern "C" void main_task(void* args) {
       1,
       nullptr);
   wind_direction_task(static_cast<void*>(mqtt.get()));
-
-  // We will update the watchdog each time we successfully publish a message.
-  // If we fail to publish for
-  constexpr int kMaxMissedPublishPeriods = 3;
-  constexpr int kWatchdogMs =
-      (1 + 3 * std::min({kWindReportPeriodSecs, kRainReportPeriodSecs})) * 1000;
-  watchdog_enable(kWatchdogMs, true);
 }
